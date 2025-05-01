@@ -1,27 +1,34 @@
+mod utils;
+mod camera;
+mod skybox;
+
 use wasm_bindgen::prelude::*;
+use web_sys::{HtmlImageElement, CanvasRenderingContext2d};
+use console_error_panic_hook::set_once;
 
+/// 初始化（设置 panic hook、初始化摄像机）
 #[wasm_bindgen]
-pub fn generate_circle(width: u32, height: u32) -> Vec<u8> {
-    let mut pixels = vec![255u8; (width * height * 4) as usize]; // 初始化全白（RGBA）
+pub fn initialize() {
+    set_once();
+    camera::init_camera();
+    skybox::load_sky_texture(); // 直接在初始化时加载纹理
+}
 
-    let center_x = width as f32 / 2.0;
-    let center_y = height as f32 / 2.0;
-    let radius = (width.min(height) as f32) / 3.0;
-    let radius_squared = radius * radius;
 
-    for y in 0..height {
-        for x in 0..width {
-            let dx = x as f32 - center_x;
-            let dy = y as f32 - center_y;
-            if dx * dx + dy * dy <= radius_squared {
-                let idx = ((y * width + x) * 4) as usize;
-                pixels[idx] = 0;     // R
-                pixels[idx + 1] = 0; // G
-                pixels[idx + 2] = 0; // B
-                pixels[idx + 3] = 255; // A
-            }
-        }
-    }
+/// 更新摄像机角度（根据鼠标移动）
+#[wasm_bindgen]
+pub fn update_camera(delta_pitch: f64, delta_yaw: f64) {
+    camera::update_camera_internal(delta_pitch, delta_yaw);
+}
 
-    pixels
+/// 缩放摄像机（根据滚轮事件）
+#[wasm_bindgen]
+pub fn zoom_camera(delta_radius: f64) {
+    camera::zoom_camera_internal(delta_radius);
+}
+
+/// 渲染一帧
+#[wasm_bindgen]
+pub fn render(context: &CanvasRenderingContext2d) {
+    skybox::render_skybox(context);
 }
