@@ -34,6 +34,7 @@ name = "black_hole_wasm"
 version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
+ "glam",
  "image",
  "js-sys",
  "nalgebra",
@@ -108,6 +109,12 @@ dependencies = [
  "crc32fast",
  "miniz_oxide",
 ]
+
+[[package]]
+name = "glam"
+version = "0.30.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6b46b9ca4690308844c644e7c634d68792467260e051c8543e0c7871662b3ba7"
 
 [[package]]
 name = "image"

@@ -1,16 +1,19 @@
-use crate::camera;
-use crate::utils::deg_to_rad;
+use crate::camera::{compute_view_matrix, get_camera};
+use glam::{Mat4, Vec3, Vec4};
+use image::GenericImageView;
+use image::io::Reader as ImageReader;
 use std::cell::RefCell;
-use std::f64::consts::PI;
+use std::f32::consts::PI;
 use wasm_bindgen::prelude::*;
 use web_sys::{CanvasRenderingContext2d, ImageData, console};
-use image::io::Reader as ImageReader;
-use image::GenericImageView;
 
 const IMAGE_BYTES: &[u8] = include_bytes!("../assets/stars_2k.jpg");
+const NUM_LONGITUDES: usize = 24;
+const NUM_LATITUDES: usize = 12;
 
 thread_local! {
     static TEXTURE_DATA: RefCell<Option<(Vec<u8>, u32, u32)>> = RefCell::new(None);
+    static VIEWPORT: RefCell<(u32, u32)> = RefCell::new((800, 600));
 }
 
 #[wasm_bindgen]
@@ -21,88 +24,78 @@ pub fn load_sky_texture() {
         .decode()
         .unwrap()
         .to_rgba8();
-
     let (width, height) = img.dimensions();
     let data = img.into_raw();
 
-    TEXTURE_DATA.with(|tex| {
-        tex.borrow_mut().replace((data, width, height));
-    });
+    TEXTURE_DATA.with(|tex| tex.borrow_mut().replace((data, width, height)));
+    console::log_1(&"Texture loaded".into());
+}
 
-    console::log_1(&"Texture loaded into memory".into());
+#[wasm_bindgen]
+pub fn set_viewport_size(width: u32, height: u32) {
+    VIEWPORT.with(|vp| vp.replace((width, height)));
 }
 
 #[wasm_bindgen]
 pub fn render_skybox(context: &CanvasRenderingContext2d) {
-    let (tex_data, tex_width, tex_height) = TEXTURE_DATA.with(|tex| {
-        tex.borrow().clone().expect("Texture not loaded; call load_sky_texture() first")
-    });
+    let (tex_data, tex_w, tex_h) =
+        TEXTURE_DATA.with(|t| t.borrow().clone().expect("Texture missing"));
+    let (width, height) = VIEWPORT.with(|vp| *vp.borrow());
+    let cam = get_camera();
+    let view = compute_view_matrix();
+    let proj = Mat4::perspective_rh(cam.fov_y, width as f32 / height as f32, 0.1, 100.0);
 
-    let canvas = context.canvas().unwrap();
-    let width = canvas.width() as usize;
-    let height = canvas.height() as usize;
+    let inv_proj_view = (proj * view).inverse();
 
-    let mut buffer = vec![0u8; width * height * 4];
-
-    let aspect_ratio = tex_width as f64 / tex_height as f64;  // 图片宽高比
-
-    let (pitch, yaw) = camera::with_camera(|cam| (cam.pitch, cam.yaw));
-    let pitch_rad = deg_to_rad(pitch);
-    let yaw_rad = deg_to_rad(yaw);
-
-    let cos_pitch = pitch_rad.cos();
-    let sin_pitch = pitch_rad.sin();
-    let cos_yaw = yaw_rad.cos();
-    let sin_yaw = yaw_rad.sin();
+    let mut buffer = vec![0u8; (width * height * 4) as usize];
 
     for y in 0..height {
-        let v = 1.0 - (y as f64 + 0.5) / (height as f64);
-        let theta = (v - 0.5) * PI;
-
         for x in 0..width {
-            let u = (x as f64 + 0.5) / (width as f64);
-            let phi = (u - 0.5) * 2.0 * PI;
+            let ndc_x = (x as f32 + 0.5) / width as f32 * 2.0 - 1.0;
+            let ndc_y = 1.0 - (y as f32 + 0.5) / height as f32 * 2.0;
+            // let clip = Vec3::new(ndc_x, ndc_y, 1.0);
+            // let dir = inv_proj_view.transform_vector3(clip).normalize();
 
-            let dir = [
-                theta.cos() * phi.cos(),
-                theta.sin(),
-                theta.cos() * phi.sin(),
-            ];
+            let clip4 = Vec4::new(ndc_x, ndc_y, 1.0, 1.0);
+            let unproj = inv_proj_view * clip4;
+            let dir = (Vec3::new(unproj.x, unproj.y, unproj.z) / unproj.w).normalize();
 
-            let rotated_dir = [
-                dir[0] * cos_yaw + dir[2] * sin_yaw,
-                dir[0] * sin_pitch * sin_yaw + dir[1] * cos_pitch - dir[2] * sin_pitch * cos_yaw,
-                -dir[0] * sin_yaw + dir[2] * cos_yaw,
-            ];
+            let lon = dir.x.atan2(dir.z);
+            let lat = dir.y.asin();
 
-            let rdx = rotated_dir[0];
-            let rdy = rotated_dir[1];
-            let rdz = rotated_dir[2];
+            let u = lon * (0.5 / PI) + 0.5;
+            let v = 0.5 - lat / PI;
 
-            let longitude = rdz.atan2(rdx);
-            let latitude = rdy.asin();
+            let u_tex = (u * tex_w as f32).clamp(0.0, tex_w as f32 - 1.0) as u32;
+            let v_tex = (v * tex_h as f32).clamp(0.0, tex_h as f32 - 1.0) as u32;
 
-            // 关键更新：对 longitude 按宽高比缩放
-            let longitude_scaled = longitude * (aspect_ratio / 2.0);
+            let tex_idx = ((v_tex * tex_w + u_tex) * 4) as usize;
+            let buf_idx = ((y * width + x) * 4) as usize;
+            buffer[buf_idx..buf_idx + 4].copy_from_slice(&tex_data[tex_idx..tex_idx + 4]);
 
-            let u_tex = (longitude_scaled / (2.0 * PI) + 0.5) * tex_width as f64;
-            let v_tex = (0.5 - latitude / PI) * tex_height as f64;
+            if cam.show_grid {
+                let lon_deg = lon.to_degrees().abs();
+                let lat_deg = lat.to_degrees().abs();
+                let lon_step = 360.0 / NUM_LONGITUDES as f32;
+                let lat_step = 180.0 / NUM_LATITUDES as f32;
+                let eps = 0.5;
 
-            let u_tex_clamped = u_tex.clamp(0.0, tex_width as f64 - 1.0) as u32;
-            let v_tex_clamped = v_tex.clamp(0.0, tex_height as f64 - 1.0) as u32;
+                let near_lon = (lon_deg % lon_step) < eps || (lon_deg % lon_step) > lon_step - eps;
+                let near_lat = (lat_deg % lat_step) < eps || (lat_deg % lat_step) > lat_step - eps;
 
-            let tex_idx = ((v_tex_clamped * tex_width + u_tex_clamped) * 4) as usize;
-            let idx = (y * width + x) * 4;
-
-            buffer[idx..idx + 4].copy_from_slice(&tex_data[tex_idx..tex_idx + 4]);
+                if near_lon || near_lat {
+                    buffer[buf_idx..buf_idx + 4].copy_from_slice(&[255, 255, 255, 255]);
+                }
+            }
         }
     }
 
-    let image_data = ImageData::new_with_u8_clamped_array_and_sh(
+    let img_data = ImageData::new_with_u8_clamped_array_and_sh(
         wasm_bindgen::Clamped(&mut buffer),
-        width as u32,
-        height as u32,
-    ).unwrap();
+        width,
+        height,
+    )
+    .unwrap();
 
-    context.put_image_data(&image_data, 0.0, 0.0).unwrap();
+    context.put_image_data(&img_data, 0.0, 0.0).unwrap();
 }

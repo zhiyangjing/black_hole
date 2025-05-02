@@ -1,84 +1,87 @@
-use wasm_bindgen::prelude::*;
+use glam::{Mat4, Vec3};
 use std::cell::RefCell;
-use crate::utils::deg_to_rad;
+use std::f32::consts::PI;
 
-/// 摄像机结构体，存储俯仰(pitch)和偏航(yaw)
+thread_local! {
+    pub static CAMERA_STATE: RefCell<Camera> = RefCell::new(Camera::default());
+}
+
 #[derive(Clone, Copy)]
 pub struct Camera {
-    pub(crate) pitch: f64,
-    pub(crate) yaw: f64,
-    radius: f64, // 新增：摄像机距离中心的距离
+    pub yaw: f32,
+    pub pitch: f32,
+    pub radius: f32,
+    pub show_grid: bool,
+    pub fov_x: f32,
+    pub fov_y: f32,
 }
 
-
-impl Camera {
-    pub fn new() -> Self {
+impl Default for Camera {
+    fn default() -> Self {
         Camera {
-            pitch: 0.0,
             yaw: 0.0,
-            radius: 1.0, // 默认距离
+            pitch: 0.0,
+            radius: 10.0,
+            show_grid: false,
+            fov_x: 100.0_f32.to_radians(),
+            fov_y: 100.0_f32.to_radians(),
         }
     }
-
-    pub fn rotate(&mut self, delta_pitch: f64, delta_yaw: f64) {
-        self.pitch = (self.pitch + delta_pitch).clamp(-89.0, 89.0);
-        self.yaw = (self.yaw + delta_yaw) % 360.0;
-    }
-
-    pub fn zoom(&mut self, delta_radius: f64) {
-        self.radius = (self.radius + delta_radius).clamp(0.1, 10.0);
-    }
-
-    /// 获取摄像机世界坐标
-    pub fn position(&self) -> [f64; 3] {
-        let pitch_rad = deg_to_rad(self.pitch);
-        let yaw_rad = deg_to_rad(self.yaw);
-        [
-            self.radius * pitch_rad.cos() * yaw_rad.cos(), // x
-            self.radius * pitch_rad.sin(),                 // y
-            self.radius * pitch_rad.cos() * yaw_rad.sin(),// z
-        ]
-    }
-
-    /// 方向向量：从摄像机 -> 原点
-    pub fn front_vector(&self) -> [f64; 3] {
-        let pos = self.position();
-        [-pos[0], -pos[1], -pos[2]]
-    }
 }
 
-
-// 使用 thread_local + RefCell 存储摄像机实例
-thread_local! {
-    static CAMERA: RefCell<Camera> = RefCell::new(Camera::new());
-}
-
-/// 初始化摄像机（设置 panic hook）
 pub fn init_camera() {
-    console_error_panic_hook::set_once();
+    CAMERA_STATE.with(|c| *c.borrow_mut() = Camera::default());
 }
 
-/// 内部：更新摄像机角度
-pub fn update_camera_internal(delta_pitch: f64, delta_yaw: f64) {
-    CAMERA.with(|c| {
-        c.borrow_mut().rotate(delta_pitch, delta_yaw);
+pub fn update_camera_internal(delta_pitch: f32, delta_yaw: f32) {
+    CAMERA_STATE.with(|c| {
+        let mut cam = c.borrow_mut();
+        cam.pitch += delta_pitch * 0.005;
+        cam.yaw += delta_yaw * 0.005;
+        cam.pitch = cam.pitch.clamp(-PI / 2.0 + 0.01, PI / 2.0 - 0.01);
     });
 }
 
-/// 内部：读取摄像机，只读
-pub fn with_camera<F, R>(f: F) -> R
-where
-    F: FnOnce(&Camera) -> R,
-{
-    CAMERA.with(|c| {
-        let cam = *c.borrow();
-        f(&cam)
+pub fn zoom_camera_internal(delta_radius: f32) {
+    CAMERA_STATE.with(|c| {
+        let mut cam = c.borrow_mut();
+        cam.radius = (cam.radius - delta_radius * 0.1).clamp(1.0, 100.0);
+    });
+}
+
+pub fn update_camera_fov_internal(fov_x: f32, fov_y: f32) {
+    CAMERA_STATE.with(|c| {
+        let mut cam = c.borrow_mut();
+        cam.fov_x = fov_x.to_radians();
+        cam.fov_y = fov_y.to_radians();
+    });
+}
+
+pub fn toggle_grid() {
+    CAMERA_STATE.with(|c| {
+        let mut cam = c.borrow_mut();
+        cam.show_grid = !cam.show_grid;
+    });
+}
+
+/// 计算当前相机的观察矩阵
+pub fn compute_view_matrix() -> Mat4 {
+    CAMERA_STATE.with(|c| {
+        let cam = c.borrow();
+        let (sy, cy) = cam.yaw.sin_cos();
+        let (sp, cp) = cam.pitch.sin_cos();
+
+        let position = Vec3::new(
+            -cam.radius * sy * cp,
+            cam.radius * sp,
+            -cam.radius * cy * cp,
+        );
+
+        Mat4::look_at_rh(position, Vec3::ZERO, Vec3::Y)
     })
 }
 
-/// 内部：缩放摄像机距离
-pub fn zoom_camera_internal(delta_radius: f64) {
-    CAMERA.with(|c| {
-        c.borrow_mut().zoom(delta_radius);
-    });
+/// 获取相机属性（用于外部）
+pub fn get_camera() -> Camera {
+    CAMERA_STATE.with(|c| c.borrow().clone())
 }
