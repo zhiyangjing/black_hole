@@ -33,7 +33,7 @@ pub fn update_camera_fov(fov_x: f64, fov_y: f64) {
 }
 
 /// 设置视口尺寸
-#[wasm_bindgen(js_name = setViewportSize)]
+#[wasm_bindgen]
 pub fn set_viewport_size(width: u32, height: u32) {
     skybox::set_viewport_size(width, height);
 }
@@ -47,5 +47,5 @@ pub fn toggle_grid() {
 /// 渲染
 #[wasm_bindgen]
 pub fn render(context: &CanvasRenderingContext2d) {
-    skybox::render_skybox(context);
+    skybox::render_skybox_with_lensing(context);
 }

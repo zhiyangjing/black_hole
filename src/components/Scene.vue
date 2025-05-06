@@ -46,8 +46,14 @@ const startRenderLoop = () => {
 
 const updateViewport = () => {
   if (!canvas.value) return
-  const width = canvas.value.width
-  const height = canvas.value.height
+
+  const ratio = 0.8
+  const width = window.innerWidth * ratio
+  const height = window.innerHeight * ratio
+  console.log(`ts: width: ${width} height: ${height}`);
+  canvas.value.width = width
+  canvas.value.height = height
+
   set_viewport_size(width, height)
 }
 

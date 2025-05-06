@@ -14,6 +14,7 @@ pub struct Camera {
     pub show_grid: bool,
     pub fov_x: f32,
     pub fov_y: f32,
+    
 }
 
 impl Default for Camera {
@@ -28,6 +29,7 @@ impl Default for Camera {
         }
     }
 }
+
 
 pub fn init_camera() {
     CAMERA_STATE.with(|c| *c.borrow_mut() = Camera::default());
@@ -64,6 +66,21 @@ pub fn toggle_grid() {
     });
 }
 
+impl Camera {
+    /// 计算相机的位置
+    pub fn position(&self) -> Vec3 {
+        let (sy, cy) = self.yaw.sin_cos();
+        let (sp, cp) = self.pitch.sin_cos();
+
+        Vec3::new(
+            -self.radius * sy * cp,
+            self.radius * sp,
+            -self.radius * cy * cp,
+        )
+    }
+}
+
+
 /// 计算当前相机的观察矩阵
 pub fn compute_view_matrix() -> Mat4 {
     CAMERA_STATE.with(|c| {
@@ -85,3 +102,4 @@ pub fn compute_view_matrix() -> Mat4 {
 pub fn get_camera() -> Camera {
     CAMERA_STATE.with(|c| c.borrow().clone())
 }
+
